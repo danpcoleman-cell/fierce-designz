@@ -1,0 +1,72 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode any base64-encoded assets
+        run: |
+          python3 << 'PY'
+          import base64
+          from pathlib import Path
+          count = 0
+          for p in Path(".").rglob("*.b64"):
+              dest = p.with_suffix("")
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_bytes(base64.b64decode(p.read_text()))
+              print(f"decoded {p} -> {dest}")
+              count += 1
+          print(f"decoded {count} file(s)")
+          PY
+
+      - name: Try to enable Pages from the main branch root
+        continue-on-error: true
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/pages" \
+            -d '{"source":{"branch":"main","path":"/"}}' || true
+
+      - name: Prepare publish directory
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '_site' \
+            --exclude '*.b64' \
+            --exclude 'README.md' \
+            ./ _site/
+          # Keep .nojekyll in the published tree
+          touch _site/.nojekyll
+          ls -la _site _site/images _site/fonts
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
