@@ -1,4 +1,4 @@
-name: Publish site and deploy Pages
+name: Publish site images
 
 on:
   push:
@@ -7,32 +7,27 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: publish-images
   cancel-in-progress: false
 
 jobs:
-  publish-assets:
+  publish-images:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Decode binary assets and commit them
+      - name: Decode images and fonts and commit them to the repo
         run: |
           python3 << 'PY'
           import base64
           from pathlib import Path
-          count = 0
           for p in sorted(Path(".").rglob("*.b64")):
               dest = p.with_suffix("")
               dest.parent.mkdir(parents=True, exist_ok=True)
               dest.write_bytes(base64.b64decode(p.read_text()))
-              print(f"decoded {p} -> {dest} ({dest.stat().st_size} bytes)")
-              count += 1
-          print(f"decoded {count} file(s)")
+              print("decoded", p, "->", dest, dest.stat().st_size)
           PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -43,59 +38,3 @@ jobs:
             git commit -m "Add published binary site assets"
             git push
           fi
-
-  deploy-pages:
-    needs: publish-assets
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Decode any remaining base64 assets in the workspace
-        run: |
-          python3 << 'PY'
-          import base64
-          from pathlib import Path
-          for p in Path(".").rglob("*.b64"):
-              dest = p.with_suffix("")
-              if not dest.exists():
-                  dest.write_bytes(base64.b64decode(p.read_text()))
-                  print(f"decoded {p} -> {dest}")
-          PY
-
-      - name: Prepare publish directory
-        run: |
-          mkdir -p _site
-          find . -maxdepth 1 -type f ! -name 'README.md' ! -name '*.b64' -exec cp -a {} _site/ \;
-          cp -a fonts images _site/ 2>/dev/null || true
-          find _site -name '*.b64' -delete
-          rm -rf _site/.git _site/.github
-          touch _site/.nojekyll
-          ls -la _site _site/images _site/fonts
-
-      - name: Configure Pages
-        id: configure
-        continue-on-error: true
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        id: upload
-        if: steps.configure.outcome == 'success'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        if: steps.configure.outcome == 'success' && steps.upload.outcome == 'success'
-        uses: actions/deploy-pages@v4
-
-      - name: Pages not enabled
-        if: steps.configure.outcome != 'success'
-        run: |
-          echo "GitHub Pages is not enabled on this repository."
-          echo "The GITHUB_TOKEN cannot enable it (needs admin or a PAT)."
-          echo "Enable it once in Settings > Pages: Deploy from a branch, main, / (root),"
-          echo "or set Source to GitHub Actions, then re-run this workflow."
